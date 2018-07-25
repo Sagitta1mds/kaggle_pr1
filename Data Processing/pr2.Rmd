@@ -1,0 +1,646 @@
+---
+title: 'Project 2: Modeling and Evaluation'
+subtitle: "CSE6242 - Data and Visual Analytics - Summer 2018\n\nDue: Sunday, July 24, 2018 at 11:59 PM UTC-12:00 on T-Square"
+output:
+  pdf_document: default
+  html_document:
+    code_folding: none
+    theme: default
+  html_notebook:
+    code_folding: none
+    theme: default
+---
+
+# Data
+
+We will use the same dataset as Project 1: [`movies_merged`](https://s3.amazonaws.com/content.udacity-data.com/courses/gt-cs6242/project/movies_merged).
+
+# Objective
+
+Your goal in this project is to build a linear regression model that can predict the `Gross` revenue earned by a movie based on other variables. You may use R packages to fit and evaluate a regression model (no need to implement regression yourself). Please stick to linear regression, however.
+
+# Instructions
+
+You should be familiar with using an [RMarkdown](http://rmarkdown.rstudio.com) Notebook by now. Remember that you have to open it in RStudio, and you can run code chunks by pressing *Cmd+Shift+Enter*.
+
+Please complete the tasks below and submit this R Markdown file (as **pr2.Rmd**) containing all completed code chunks and written responses, and a PDF export of it (as **pr2.pdf**) which should include the outputs and plots as well.
+
+_Note that **Setup** and **Data Preprocessing** steps do not carry any points, however, they need to be completed as instructed in order to get meaningful results._
+
+# Setup
+
+Same as Project 1, load the dataset into memory:
+
+```{r}
+set.seed(2468)
+load('movies_merged')
+```
+
+This creates an object of the same name (`movies_merged`). For convenience, you can copy it to `df` and start using it:
+
+```{r}
+df = movies_merged
+cat("Dataset has", dim(df)[1], "rows and", dim(df)[2], "columns", end="\n", file="")
+colnames(df)
+```
+
+## Load R packages
+
+Load any R packages that you will need to use. You can come back to this chunk, edit it and re-run to load any additional packages later.
+
+```{r}
+library(ggplot2)
+library(GGally)
+library(ggplot2)
+library(GGally)
+library(assertr)
+library(splitstackshape)
+library(lubridate)
+library(reshape2)
+```
+
+If you are using any non-standard packages (ones that have not been discussed in class or explicitly allowed for this project), please mention them below. Include any special instructions if they cannot be installed using the regular `install.packages('<pkg name>')` command.
+
+**Non-standard packages used**: None
+
+# Data Preprocessing
+
+Before we start building models, we should clean up the dataset and perform any preprocessing steps that may be necessary. Some of these steps can be copied in from your Project 1 solution. It may be helpful to print the dimensions of the resulting dataframe at each step.
+
+## 1. Remove non-movie rows
+
+```{r}
+# TODO: Remove all rows from df that do not correspond to movies
+df <- df[which(df$Type == 'movie'),]
+dim(df)
+```
+
+## 2. Drop rows with missing `Gross` value
+
+Since our goal is to model `Gross` revenue against other variables, rows that have missing `Gross` values are not useful to us.
+
+```{r}
+# TODO: Remove rows with missing Gross value
+df <- df[!is.na(df$Gross),]
+dim(df)
+```
+
+## 3. Exclude movies released prior to 2000
+
+Inflation and other global financial factors may affect the revenue earned by movies during certain periods of time. Taking that into account is out of scope for this project, so let's exclude all movies that were released prior to the year 2000 (you may use `Released`, `Date` or `Year` for this purpose).
+
+```{r}
+# TODO: Exclude movies released prior to 2000
+# Extract Year from 'Released_Year', if Released_Year is blank fill it up with value from 'Date' column
+df$Released_year <- year(ymd(df$Released))
+df$Released_year[is.na(df$Released_year)] <- df$Year[is.na(df$Released_year)]
+df <- df[which(df$Released_year >= 2000), ]
+#df$month <-  month(ymd(df$Released))
+dim(df)
+```
+
+## 4. Eliminate mismatched rows
+
+_Note: You may compare the `Released` column (string representation of release date) with either `Year` or `Date` (numeric representation of the year) to find mismatches. The goal is to avoid removing more than 10% of the rows._
+
+```{r}
+# TODO: Remove mismatched rows
+# df1 <- df[(df$Year == df$Released_year),]
+df$diff_year <- abs(df$Released_year - df$Year)
+df <- df[which(df$diff_year < 2), ]
+df$diff_year <- NULL
+dim(df)
+```
+
+## 5. Drop `Domestic_Gross` column
+
+`Domestic_Gross` is basically the amount of revenue a movie earned within the US. Understandably, it is very highly correlated with `Gross` and is in fact equal to it for movies that were not released globally. Hence, it should be removed for modeling purposes.
+
+```{r}
+# TODO: Exclude the `Domestic_Gross` column
+df$Domestic_Gross <- NULL
+dim(df)
+```
+
+## 6. Process `Runtime` column
+
+```{r}
+# TODO: Replace df$Runtime with a numeric column containing the runtime in minutes
+parse_runtime <- function(runtime){
+  runtime <- strsplit(runtime, ' ')[[1]]
+  if((length(runtime) == 2) && (runtime[2] == 'h')){
+    return(as.integer(runtime[1])*60)
+  }else if((length(runtime) == 2) && (runtime[2] == 'min')){
+    return(as.integer(runtime[1]))
+  }else if(length(runtime) == 4){
+    hr_to_min = as.integer(runtime[1])*60
+    return(hr_to_min + as.integer(runtime[3]))
+  }else return(NA)
+}
+df$Runtime <- sapply(df$Runtime, parse_runtime)
+```
+
+Perform any additional preprocessing steps that you find necessary, such as dealing with missing values or highly correlated columns (feel free to add more code chunks, markdown blocks and plots here as necessary).
+
+```{r}
+# TODO(optional): Additional preprocessing
+
+df_numeric <- df[,sapply(df, function(x) is.numeric(x))]
+df_numeric$Year <- NULL
+df_numeric$Date <- NULL
+df_numeric$diff_year <- NULL
+df_numeric$Metascore <- as.numeric(as.character(df$Metascore))
+
+```
+
+_**Note**: Do NOT convert categorical variables (like `Genre`) into binary columns yet. You will do that later as part of a model improvement task._
+
+## Final preprocessed dataset
+
+Report the dimensions of the preprocessed dataset you will be using for modeling and evaluation, and print all the final column names. (Again, `Domestic_Gross` should not be in this list!)
+
+```{r}
+# TODO: Print the dimensions of the final preprocessed dataset and column names
+print(cat("Dataset has", dim(df_numeric)[1], "rows and", dim(df_numeric)[2], "columns", end="\n", file=""))
+print(colnames(df_numeric))
+```
+
+
+```{r}
+# check NA values in all column
+
+print(sapply(df_numeric, function(x) sum(is.na(x))))
+df_NA <- na.omit(df)
+dim(df_NA)
+# we might have to remove rows with NA values
+# Replace NA values with median data
+for(i in 1:ncol(df_numeric)){
+  df_numeric[is.na(df_numeric[,i]), i] <- median(df_numeric[,i], na.rm = TRUE)
+}
+```
+
+
+# Evaluation Strategy
+
+In each of the tasks described in the next section, you will build a regression model. In order to compare their performance, you will compute the training and test Root Mean Squared Error (RMSE) at different training set sizes.
+
+First, randomly sample 10-20% of the preprocessed dataset and keep that aside as the **test set**. Do not use these rows for training! The remainder of the preprocessed dataset is your **training data**.
+
+Now use the following evaluation procedure for each model:
+
+- Choose a suitable sequence of training set sizes, e.g. 10%, 20%, 30%, ..., 100% (10-20 different sizes should suffice). For each size, sample that many inputs from the training data, train your model, and compute the resulting training and test RMSE.
+- Repeat your training and evaluation at least 10 times at each training set size, and average the RMSE results for stability.
+- Generate a graph of the averaged train and test RMSE values as a function of the train set size (%), with optional error bars.
+
+You can define a helper function that applies this procedure to a given set of features and reuse it.
+
+# Tasks
+
+Each of the following tasks is worth 20 points, for a total of 100 points for this project. Remember to build each model as specified, evaluate it using the strategy outlined above, and plot the training and test errors by training set size (%).
+
+## 1. Numeric variables
+
+Use Linear Regression to predict `Gross` based on available _numeric_ variables. You can choose to include all or a subset of them.
+
+```{r}
+# TODO: Build & evaluate model 1 (numeric variables only)
+#col_numeric <- sapply(df_numeric, is.numeric)
+#df_num <- df[,col_numeric]
+df_num <- df_numeric #for feature transformations
+#remove(df_numeric)
+
+RMSE <- function(data, train_size){
+  average_rmse_train <- c()
+  average_rmse_test <- c()
+  iter = 0
+  #split train and test datasets
+  n_train <- ceiling(nrow(data)*0.8) 
+  shuffle <- sample(nrow(data))
+  train_actual <- data[shuffle[1:n_train], ]
+  test_df <- data[shuffle[(n_train+1):nrow(data)],]
+  
+  while(iter < 10){
+    n_train_pct <- ceiling(nrow(train_actual)*train_size)
+    shuffle_train <- sample(nrow(train_actual))
+    train_df <- train_actual[shuffle_train[1:n_train_pct], ]   
+    #cat(rankMatrix(train_df), "\n")
+    #cat(rankMatrix(test_df), "\n")
+    lm.out <- lm(Gross~., data = train_df)
+    pred_train <- suppressWarnings(predict(lm.out, train_df))
+    pred_test <- suppressWarnings(predict(lm.out, test_df))
+
+    #pred_train <- predict(lm.out, train_df)
+    #pred_test <- predict(lm.out, test_df)
+
+    average_rmse_train <- append(average_rmse_train, sqrt(mean((train_df$Gross - pred_train)^2))) 
+    average_rmse_test <- append(average_rmse_test, sqrt(mean((test_df$Gross - pred_test)^2)))
+    
+    #average_rmse_train <- append(average_rmse_train, RMSE(train_df$Gross, pred_train)) 
+    #average_rmse_test <- append(average_rmse_test, RMSE(test_df$Gross, pred_test))
+
+    iter = iter + 1
+  }
+  rmse_train = mean(average_rmse_train)
+  rmse_test = mean(average_rmse_test)
+  #print(rmse_test)
+  return(c(rmse_train, rmse_test))
+}
+
+
+training_size <- seq(0.1, 1, length.out = 20)
+training_size_stats2 <- data.frame(matrix(nrow = 10, ncol =3))
+colnames(training_size_stats2) <- c("training_size", "train_rmse", "test_rmse")
+
+for(i in 1:length(training_size)){
+  resutls_0_1 <- RMSE(df_numeric, training_size[i])
+  training_size_stats2[i,] <- c(training_size[i], resutls_0_1[1], resutls_0_1[2])
+}
+
+```
+
+**Q**: List the numeric variables you used.
+
+**A**: #maybe remove volumn 'Date', 'Year' and keep only 'Released_year'
+
+
+**Q**: What is the best mean test RMSE value you observed, and at what training set size?
+
+**A**: 
+
+
+## 2. Feature transformations
+
+Try to improve the prediction quality from **Task 1** as much as possible by adding feature transformations of the numeric variables. Explore both numeric transformations such as power transforms and non-numeric transformations of the numeric variables like binning (e.g. `is_budget_greater_than_3M`).
+
+```{r message = FALSE, warnings = FALSE}
+# TODO: Build & evaluate model 2 (transformed numeric variables only)
+
+# imdbrating and tomato rating quantiles
+
+ggplot(df_num, aes(x=Budget^1.3, y=Gross)) +
+  geom_point(shape=1) +
+  geom_smooth()
+
+
+### Power transformations should be before one-hot and binning
+log_transform <- function(x){log10()}
+
+num_col <- colnames(df_num)
+num_col <- num_col[! num_col %in% 'Gross']
+power_df <- data.frame(matrix(NA, nrow = nrow(df_num), ncol = 0))
+
+for(j in 1:length(num_col)){
+    log_new_col <- log10(df_num[,num_col[j]] + 0.01) #to avoid log10(0)
+    power_df[, paste0('log_', num_col[j])] <- log_new_col
+    sqr_new_col <- (df_num[,num_col[j]])^2
+    power_df[, paste0('square_', num_col[j])] <- sqr_new_col
+    cub_new_col <- (df_num[,num_col[j]])^3
+    power_df[, paste0('cube_', num_col[j])] <- cub_new_col
+}
+
+new_power_cols <- colnames(power_df)
+
+# Replace NA values with median data
+for(i in 1:ncol(power_df)){
+  power_df[is.na(power_df[,i]), i] <- median(power_df[,i], na.rm = TRUE)
+}
+
+#normalize all the columns
+power_df <- data.frame(sapply(power_df, function(x) scale(x, center = TRUE))) 
+
+combined_df <- cbind(df_numeric, power_df)
+
+lm_new_num <- lm(Gross~., data = combined_df)
+summary(lm_new_num)
+
+feature_signif <- c('square_tomatoReviews',
+'cube_tomatoReviews',
+'square_tomatoRotten',
+'cube_tomatoUserMeter',
+'square_imdbVotes',
+'log_imdbVotes',
+'cube_tomatoUserMeter',
+'cube_Budget',
+'log_Released_year',
+'square_Released_year',
+'cube_Released_year')
+
+combined_cols_wanted <- c(colnames(df_numeric), feature_signif)
+combined_df_wanted <- combined_df[,combined_cols_wanted]
+combined_df_wanted$cube_tomatoUserMeter.1 <- NULL
+
+lm_new_num <- lm(Gross~., data = combined_df_wanted)
+summary(lm_new_num)
+combined_df_wanted <- combined_df #not removing any features
+# budget quantiles
+budget_quantiles <- quantile(combined_df_wanted$Budget, probs = seq(0, 1, 0.2), na.rm = TRUE)
+budgetQuantiles <- function(budget) {
+  cut(budget, breaks = budget_quantiles, labels = c("Ultra-Low-Budget", "Low-Budget", "Medium-Budget", "Large-Budget", "Ultra-Large-Budget"))
+}
+combined_df_wanted$budget_quant <- sapply(combined_df_wanted$Budget, budgetQuantiles)
+combined_df_wanted <- cSplit_e(combined_df_wanted, "budget_quant", ",", type = "character", fill = 0) #split Genre column in to 
+combined_df_wanted$`budget_quant_Ultra-Low-Budget` <- NULL #to remove linearly dependent vars)
+
+# runtime quantiles
+runtime_quantiles <- quantile(combined_df_wanted$Runtime, probs = seq(0, 1, 0.33), na.rm = TRUE)
+runtimeQuantiles <- function(runtime) {
+  cut(runtime, breaks = runtime_quantiles, labels = c( "Short", "Medium", "Long"))
+}
+combined_df_wanted$runtime_quant <- sapply(combined_df_wanted$Runtime, runtimeQuantiles)
+combined_df_wanted <- cSplit_e(combined_df_wanted, "runtime_quant", ",", type = "character", fill = 0) #split Genre column in to 
+combined_df_wanted$runtime_quant_Short <- NULL #to remove linearly dependent vars)
+
+### One hot encoding and binning
+# imdb quantiles
+imdb_quantiles <- quantile(combined_df_wanted$imdbRating, probs = seq(0, 1, 0.33), na.rm = TRUE)
+imdbQuantiles <- function(imdbrating) {
+  cut(imdbrating, breaks = imdb_quantiles, labels = c( "bad", "average", "good"))
+}
+combined_df_wanted$imdbrating_Q <- sapply(combined_df_wanted$imdbRating, imdbQuantiles)
+combined_df_wanted <- cSplit_e(combined_df_wanted, "imdbrating_Q", ",", type = "character", fill = 0) #split Genre column in to 
+combined_df_wanted$imdbrating_Q_good <- NULL #to remove linearly dependent vars)
+
+# tomatoRating quantiles
+tomato_quantiles <- quantile(combined_df_wanted$tomatoRating, probs = seq(0, 1, 0.33), na.rm = TRUE)
+tomatoQuantiles <- function(tomatorating) {
+  cut(tomatorating, breaks = tomato_quantiles, labels = c( "bad", "average", "good"))
+}
+
+combined_df_wanted$tomatorating_Q <- sapply(combined_df_wanted$tomatoRating, tomatoQuantiles)
+combined_df_wanted <- cSplit_e(combined_df_wanted, "tomatorating_Q", ",", type = "character", fill = 0) #split Genre column in to 
+combined_df_wanted$tomatorating_Q_good <- NULL #to remove linearly dependent vars)
+
+#runtime bins
+runtime<-combined_df_wanted$Runtime
+combined_df_wanted$Runtime_Bin<-cut(runtime,seq(min(runtime)-1,max(runtime)+1,(max(runtime) - min(runtime)+2)/6),right=FALSE,labels=c(1:6))
+combined_df_wanted$Runtime_Bin <- as.numeric(as.factor(combined_df_wanted$Runtime_Bin))
+
+metascore <- combined_df_wanted$Metascore
+combined_df_wanted$metascore_bin<-cut(metascore,seq(min(metascore)-1,max(metascore)+1,(max(metascore) - min(metascore)+2)/6),right=FALSE,labels=c(1:6))
+combined_df_wanted$metascore_bin <- as.numeric(as.factor(combined_df_wanted$metascore_bin))
+
+imdbvotes <- combined_df_wanted$imdbVotes
+combined_df_wanted$imdbvote_bin<-cut(imdbvotes,seq(min(imdbvotes)-1,max(imdbvotes)+1,(max(imdbvotes) - min(imdbvotes)+2)/15),right=FALSE,labels=c(1:15))
+combined_df_wanted$imdbvote_bin <- as.numeric(as.factor(combined_df_wanted$imdbvote_bin))
+
+# removing na in categoriacal like tomato_Q
+combined_df_wanted <- na.omit(combined_df_wanted)
+
+#combined_df <- na.omit(combined_df)
+
+temp <- combined_df_wanted[,sapply(combined_df_wanted, function(x) is.numeric(x))]
+
+temp <- combined_df[,sapply(combined_df, function(x) is.numeric(x))]
+
+
+lm_new_num <- lm(Gross~., data = temp)
+summary(lm_new_num)
+
+# 
+temp$Run
+
+dim(df_num)
+
+temp$Budget <- NULL
+temp$Runtime <- NULL
+temp$imdbRating <- NULL
+temp$tomatoRating <- NULL
+temp$Metascore <- NULL
+temp$imdbVotes <- NULL
+
+# 'training_size_stats_tranform7' - with only wanted cols and no quantiles - looks better
+training_size_stats_tranform7 <- data.frame(matrix(nrow = 10, ncol =3))
+colnames(training_size_stats_tranform7) <- c("training_size", "train_rmse", "test_rmse")
+
+for(i in 1:length(training_size)){
+  resutls_transform <- RMSE(temp, training_size[i])
+  training_size_stats_tranform7[i,] <- c(training_size[i], resutls_transform[1], resutls_transform[2])
+}
+```
+
+**Q**: Explain which transformations you used and why you chose them.
+
+**A**: 
+
+
+**Q**: How did the RMSE change compared to Task 1?
+
+**A**: 
+
+
+## 3. Non-numeric variables
+
+Write code that converts genre, actors, directors, and other categorical variables to columns that can be used for regression (e.g. binary columns as you did in Project 1). Also process variables such as awards into more useful columns (again, like you did in Project 1). Now use these converted columns only to build your next model.
+
+```{r}
+# TODO: Build & evaluate model 3 (converted non-numeric variables only)
+
+#### Convert top 12 Genre to binary features, 12 Genre's account for more than 85% data
+df1 <- df #delete later
+
+#df_categ <- data.frame(matrix(NA, nrow = nrow(df_num), ncol = 0))
+
+df_categ <- df[, sapply(df, function(x) !is.numeric(x))] #replace all df with df_char for categorical features
+df_categ$Released_year <- df$Released_year
+
+genre_df <- df_categ[,c('Title', 'Genre', 'Released_year')]
+genre_df <- cSplit_e(genre_df, "Genre", ",", type = "character", fill = 0) #split Genre column in to 
+genre_df$`Genre_N/A` <- NULL
+
+# add month from date columns
+df_categ$month <-  month(ymd(df$Released))
+df_categ$Released <- NULL
+
+# tomato Image
+# if the positive reviews are less than 60%, the film is considered "rotten". ... The "Certified Fresh" seal is reserved for movies that satisfy two criteria: a "Tomatometer" of 75% or better and at least 40 reviews (for limited release movies, otherwise 80) from "Tomatometer" critics (including 5 Top Critics).
+
+df_categ <- cSplit_e(df_categ, "Rated", ",", type = "character", fill = 0) #split Genre column in to 
+df_categ$`Rated_N/A` <- NULL
+df_categ$`Rated_NOT RATED` <- NULL
+
+# movie rating
+df_categ <- cSplit_e(df_categ, "tomatoImage", ",", type = "character", fill = 0) #split Genre column in to 
+df_categ$`tomatoImage_N/A` <- NULL
+
+most_cmon_10 <-  as.data.frame(sort(colSums(genre_df[,4:ncol(genre_df)]), decreasing = TRUE)[1:12], row.names = NULL)
+most_cmon_10$Genre <- rownames(most_cmon_10)
+colnames(most_cmon_10) <- c("Count", "Genre")
+#most_cmon_10$Genre <- gsub("Genre_", "", most_cmon_10$Genre)
+#colnames(genre_df) <- gsub("Genre_", "", colnames(genre_df))
+req_cols = append(c('Title', 'Released_year') , most_cmon_10$Genre )
+genre_df <- genre_df[, req_cols] #only keep top 10 most frequent Genres
+df_categ$Genre <- NULL
+df_categ <- merge(df_categ, genre_df, by = c('Title', 'Released_year'))
+
+#### Convert Writer feature to no.of writers for features
+#remove uncesseray characters from Writer feature
+df2 <- df_categ #delete later
+df_categ$Writer <- gsub(" \\([a-z]*\\)","", df_categ$Writer)
+
+writer_df <- df_categ[,c('Title', 'Writer', 'Released_year')]
+writer_df <- cSplit_e(writer_df, "Writer", ",", type = "character", fill = 0) #split Writer column in to 
+writer_df$`Writer_N/A` <- NULL
+
+df_categ$Writer <- NULL
+df_categ$Writer <-  as.data.frame(rowSums(writer_df[,4:ncol(writer_df)]))
+
+#### Convert Production to binary feature
+df3 <- df_categ #delete later
+
+# Sony has different forms like Sony Pictures, Sony Columbia Pictures, Sony Entertainment
+prod_df <- df[,c('Title', 'Production', 'Released_year')]
+prod_df$Production <- tolower(prod_df$Production)
+prod_df$Production <- gsub(".*sony.*", "sony pictures", prod_df$Production)
+prod_df$Production <- gsub(".*warner.*", "warner bros", prod_df$Production)
+prod_df$Production <- gsub(".*weinsten.*", "weinsten company", prod_df$Production)
+prod_df$Production <- gsub(".*universal.*", "universal pictures", prod_df$Production)
+prod_df$Production <- gsub(".*twentieth.*", "20th century fox", prod_df$Production)
+prod_df$Production <- gsub(".*20th century.*", "20th century fox", prod_df$Production)
+
+prod_df <- cSplit_e(prod_df, "Production", ",", type = "character", fill = 0) #split Genre column in to 
+prod_df$`Production_n/a` <- NULL
+prod_count <-  as.data.frame(sort(colSums(prod_df[,4:ncol(prod_df)]), decreasing = TRUE)[1:12], row.names = NULL)
+prod_count$production <- rownames(prod_count)
+colnames(prod_count) <- c("Count", "production")
+#most_cmon_10$Genre <- gsub("Genre_", "", most_cmon_10$Genre)
+#colnames(genre_df) <- gsub("Genre_", "", colnames(genre_df))
+req_cols = append(c('Title', 'Released_year') , prod_count$production )
+prod_df <- prod_df[, req_cols] #only keep top 11 movie production houses
+df_categ$Production <- NULL
+df_categ <- merge(df_categ, prod_df, by = c('Title', 'Released_year'))
+df_categ$`Production_n/a` <- NULL
+
+# Creating Wins and Nominations feature from Awards feature
+awards_df <- df_categ
+#awards_df <- awards_df[which(awards_df$Awards != 'N/A'), ]
+# awards_df <- df[sample(nrow(awards_df), 5000), ] #sampling 5000 to reduce runtime for submission
+parse_awards <- function(movie_db){
+  
+  regex_awards <- function(awards) {
+    temp_x <- regmatches(awards, gregexpr("+[0-9]+", awards))[[1]]
+    temp_x <- as.numeric(unlist(temp_x))
+  }
+  movie_db$numeric_awards <- sapply(movie_db$Awards, regex_awards)
+  #function(awards) as.numeric(unlist(regmatches(awards, gregexpr("+[0-9]+", awards))[[1]]) )
+  movie_db$Wins = 0
+  movie_db$Nominations = 0
+  Count_InvalidAwards <- 0 #
+  cv <- nrow(movie_db)
+  for(i in 1:cv){
+    if( (length(movie_db[i,]$numeric_awards[[1]])!=3) & (length(movie_db[i,]$numeric_awards[[1]])!=2) & (length(movie_db[i,]$numeric_awards[[1]])!=0)){
+      if(length(grep("win",movie_db[i,]$Awards))>0){
+        movie_db[i,]$Wins = as.numeric(movie_db[i,]$numeric_awards[[1]][1])          
+      }
+      if(length(grep("nomination",movie_db[i,]$Awards))>0){
+        movie_db[i,]$Nominations = as.numeric(movie_db[i,]$numeric_awards[[1]][1])   
+      }
+    }
+    if(length(movie_db[i,]$numeric_awards[[1]])==2){
+      if((length(grep("win",movie_db[i,]$Awards))>0) || (length(grep("won",movie_db[i,]$Awards))>0)|| (length(grep("Won",movie_db[i,]$Awards))>0)){
+        movie_db[i,]$Wins = as.numeric(movie_db[i,]$numeric_awards[[1]][1])          
+      }
+      if(length(grep("nomination",movie_db[i,]$Awards))>0){
+        movie_db[i,]$Nominations = as.numeric(movie_db[i,]$numeric_awards[[1]][2])   
+      }
+    }
+    if(length(movie_db[i,]$numeric_awards[[1]])==3){
+      if((length(grep("win",movie_db[i,]$Awards))>0) || (length(grep("won",movie_db[i,]$Awards))>0)|| (length(grep("Won",movie_db[i,]$Awards))>0)){
+        movie_db[i,]$Wins = as.numeric(movie_db[i,]$numeric_awards[[1]][2])          
+      }
+      if(length(grep("nomination",movie_db[i,]$Awards))>0){
+        movie_db[i,]$Nominations = as.numeric(movie_db[i,]$numeric_awards[[1]][3])   
+      }
+    }
+    if(length(movie_db[i,]$numeric_awards[[1]])==0){
+      movie_db[i,]$Wins = 0
+      movie_db[i,]$Nominations = 0
+      Count_InvalidAwards = Count_InvalidAwards + 1
+    }
+    
+    if(length(unlist(movie_db[i,]$Wins))==1)
+      movie_db[i,]$Wins = as.numeric(unlist(movie_db[i,]$Wins))
+    else
+      print(paste(movie_db[i,]$Awards, movie_db[i,]$Wins, sep = " ==> " ))
+    if(length(unlist(movie_db[i,]$Nominations))==1)
+      movie_db[i,]$Nominations = as.numeric(unlist(movie_db[i,]$Nominations)[[1]])
+    else
+      print(paste(movie_db[i,]$Nominations, movie_db[i,]$Nominations, sep = " ==> " ))
+  }
+  print("Invalid Number of Rows w/o excluding 'N/A' in Awards")
+  print(Count_InvalidAwards)
+  return(movie_db)
+}
+df_categ <- parse_awards(awards_df)
+remove(awards_df)
+df_categ$numeric_awards <- NULL
+
+# Add Gross to df_categ for model training
+df_categ <- merge(df_categ, df[,c('Title', 'Released_year', 'Gross')], by = c('Title', 'Released_year'))
+df_categ$Released_year <- NULL
+
+num_categ_cols <- sapply(df_categ, function(x) is.numeric(x))
+df_categ <- df_categ[, num_categ_cols]
+df_categ <- na.omit(df_categ)
+
+## model for categorical features
+training_size <- seq(0.1, 1, length.out = 20)
+training_size_stats_categ <- data.frame(matrix(nrow = 20, ncol =3))
+colnames(training_size_stats_categ) <- c("training_size", "train_rmse_categorical", "test_rmse_categorical")
+
+for(i in 1:length(training_size)){
+  resutls_categ <- RMSE(df_categ, training_size[i])
+  training_size_stats_categ[i,] <- c(training_size[i], resutls_categ[1], resutls_categ[2])
+}
+```
+
+**Q**: Explain which categorical variables you used, and how you encoded them into features.
+
+**A**: 
+
+
+**Q**: What is the best mean test RMSE value you observed, and at what training set size? How does this compare with Task 2?
+
+**A**: 
+
+
+## 4. Numeric and categorical variables
+
+Try to improve the prediction quality as much as possible by using both numeric and non-numeric variables from **Tasks 2 & 3**.
+
+```{r}
+# TODO: Build & evaluate model 4 (numeric & converted non-numeric variables)
+
+#merge df_num and df_categ to df_all
+
+training_size <- seq(0.1, 1, length.out = 20)
+training_size_stats_all <- data.frame(matrix(nrow = 10, ncol =3))
+colnames(training_size_stats_all) <- c("training_size", "train_rmse_allFeatures", "test_rmse_allFeatures")
+
+for(i in 1:length(training_size)){
+  resutls_allFeatures <- RMSE(df_categ, training_size[i])
+  training_size_stats_all[i,] <- c(training_size[i], resutls_allFeatures[1], resutls_allFeatures[2])
+}
+```
+
+**Q**: Compare the observed RMSE with Tasks 2 & 3.
+
+**A**: 
+
+
+## 5. Additional features
+
+Now try creating additional features such as interactions (e.g. `is_genre_comedy` x `is_budget_greater_than_3M`) or deeper analysis of complex variables (e.g. text analysis of full-text columns like `Plot`).
+
+```{r}
+# TODO: Build & evaluate model 5 (numeric, non-numeric and additional features)
+```
+
+**Q**: Explain what new features you designed and why you chose them.
+
+**A**: 
+
+
+**Q**: Comment on the final RMSE values you obtained, and what you learned through the course of this project.
+
+**A**:
+

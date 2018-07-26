@@ -57,6 +57,7 @@ library(assertr)
 library(splitstackshape)
 library(lubridate)
 library(reshape2)
+library(plyr)
 ```
 
 If you are using any non-standard packages (ones that have not been discussed in class or explicitly allowed for this project), please mention them below. Include any special instructions if they cannot be installed using the regular `install.packages('<pkg name>')` command.
@@ -107,7 +108,7 @@ _Note: You may compare the `Released` column (string representation of release d
 # TODO: Remove mismatched rows
 # df1 <- df[(df$Year == df$Released_year),]
 df$diff_year <- abs(df$Released_year - df$Year)
-df <- df[which(df$diff_year < 2), ]
+df <- df[which(df$diff_year < 2), ] #removing rows when there is more than one year diff between Year and Release Year.
 df$diff_year <- NULL
 dim(df)
 ```
@@ -142,15 +143,44 @@ df$Runtime <- sapply(df$Runtime, parse_runtime)
 
 Perform any additional preprocessing steps that you find necessary, such as dealing with missing values or highly correlated columns (feel free to add more code chunks, markdown blocks and plots here as necessary).
 
+## 7. Additional preprocessing - NA values
+
 ```{r}
-# TODO(optional): Additional preprocessing
+# TODO(optional): Additional preprocessing on Numeric Columns
 
 df_numeric <- df[,sapply(df, function(x) is.numeric(x))]
+df_numeric <- cbind(df$Title, df_numeric)
+colnames(df_numeric)[1] <- "Title"
 df_numeric$Year <- NULL
 df_numeric$Date <- NULL
 df_numeric$diff_year <- NULL
 df_numeric$Metascore <- as.numeric(as.character(df$Metascore))
 
+# check NA values in all column
+print(sapply(df_numeric, function(x) sum(is.na(x))))
+# Remove rows where Runtime is not available
+df_numeric <- df_numeric[!is.na(df_numeric$Runtime), ] # 37 rows removed
+
+#df_NA <- na.omit(df)
+#dim(df_NA)
+
+# for real values features, replace NA with "average""
+# tomatoRating and tomatoUserRating (5, 10 cols)
+for(i in 2:ncol(df_numeric)){
+  for (j in c(5,10)){
+    df_numeric[is.na(df_numeric[,i]), j] <- mean(df_numeric[,i], na.rm = TRUE)
+  }
+}
+
+# For the rest of NA values which are count replace them with "median""
+for(i in 2:ncol(df_numeric)){
+  df_numeric[is.na(df_numeric[,i]), i] <- median(df_numeric[,i], na.rm = TRUE)
+}
+
+# Re-check if no NA values in all column
+print(sapply(df_numeric, function(x) sum(is.na(x))))
+
+df <- merge(df, df_numeric['Title'], by = 'Title')
 ```
 
 _**Note**: Do NOT convert categorical variables (like `Genre`) into binary columns yet. You will do that later as part of a model improvement task._
@@ -161,22 +191,8 @@ Report the dimensions of the preprocessed dataset you will be using for modeling
 
 ```{r}
 # TODO: Print the dimensions of the final preprocessed dataset and column names
-print(cat("Dataset has", dim(df_numeric)[1], "rows and", dim(df_numeric)[2], "columns", end="\n", file=""))
-print(colnames(df_numeric))
-```
-
-
-```{r}
-# check NA values in all column
-
-print(sapply(df_numeric, function(x) sum(is.na(x))))
-df_NA <- na.omit(df)
-dim(df_NA)
-# we might have to remove rows with NA values
-# Replace NA values with median data
-for(i in 1:ncol(df_numeric)){
-  df_numeric[is.na(df_numeric[,i]), i] <- median(df_numeric[,i], na.rm = TRUE)
-}
+print(cat("Dataset has", dim(df)[1], "rows and", dim(df)[2], "columns", end="\n", file=""))
+print(colnames(df))
 ```
 
 
@@ -204,8 +220,6 @@ Use Linear Regression to predict `Gross` based on available _numeric_ variables.
 
 ```{r}
 # TODO: Build & evaluate model 1 (numeric variables only)
-#col_numeric <- sapply(df_numeric, is.numeric)
-#df_num <- df[,col_numeric]
 df_num <- df_numeric #for feature transformations
 #remove(df_numeric)
 
@@ -213,13 +227,13 @@ RMSE <- function(data, train_size){
   average_rmse_train <- c()
   average_rmse_test <- c()
   iter = 0
-  #split train and test datasets
-  n_train <- ceiling(nrow(data)*0.8) 
+  # shuffle and split train and test datasets - 90/10
+  n_train <- ceiling(nrow(data)*0.9) 
   shuffle <- sample(nrow(data))
   train_actual <- data[shuffle[1:n_train], ]
   test_df <- data[shuffle[(n_train+1):nrow(data)],]
   
-  while(iter < 10){
+  while(iter < 20){
     n_train_pct <- ceiling(nrow(train_actual)*train_size)
     shuffle_train <- sample(nrow(train_actual))
     train_df <- train_actual[shuffle_train[1:n_train_pct], ]   
@@ -246,26 +260,44 @@ RMSE <- function(data, train_size){
   return(c(rmse_train, rmse_test))
 }
 
+# Removing Title from numeric dataset
+df_numeric_train <- subset(df_numeric, select = -Title)
 
-training_size <- seq(0.1, 1, length.out = 20)
-training_size_stats2 <- data.frame(matrix(nrow = 10, ncol =3))
-colnames(training_size_stats2) <- c("training_size", "train_rmse", "test_rmse")
+# collecting RMSE stats
+training_size <- seq(0.1, 1, length.out = 15)
+training_size_stats <- data.frame(matrix(nrow = 15, ncol =3))
+colnames(training_size_stats) <- c("training_size", "train_rmse", "test_rmse")
 
 for(i in 1:length(training_size)){
-  resutls_0_1 <- RMSE(df_numeric, training_size[i])
-  training_size_stats2[i,] <- c(training_size[i], resutls_0_1[1], resutls_0_1[2])
+  resutls_0_1 <- RMSE(df_numeric_train, training_size[i])
+  training_size_stats[i,] <- c(training_size[i], resutls_0_1[1], resutls_0_1[2])
 }
 
+#lm_new_num <- lm(Gross~., data = test)
+#summary(lm_new_num)
+
+rmse_task1 <- melt(training_size_stats[,c('training_size', "train_rmse", "test_rmse")], id = "training_size")
+colnames(rmse_task1) <- c("training_size", "variable", "RMSE")
+
+ggplot(rmse_task1, aes(x = training_size, y=RMSE, group = variable, color = variable)) + 
+  geom_line(linetype = "dashed") + 
+  geom_point() + scale_y_log10() +
+ggtitle("Numeric Feature Modelling")
+
+#print(colnames(df_numeric_train))
+print(paste("Best mean test RMSE value observed for numeric features:", min(training_size_stats$test_rmse), sep = " "))
 ```
 
 **Q**: List the numeric variables you used.
 
-**A**: #maybe remove volumn 'Date', 'Year' and keep only 'Released_year'
+**A**:  [1] "Runtime"           "imdbRating"        "imdbVotes"         "tomatoMeter"       "tomatoRating"      "tomatoReviews"    
+        [7] "tomatoFresh"       "tomatoRotten"      "tomatoUserMeter"   "tomatoUserRating"  "tomatoUserReviews" "Budget"           
+        [13]"Released_year"     "Metascore"         "Gross" (Target)             
+
 
 
 **Q**: What is the best mean test RMSE value you observed, and at what training set size?
-
-**A**: 
+**A**: Best mean test RMSE value observed for numeric features: 83858702.8399003, training_size is 87.15%
 
 
 ## 2. Feature transformations
@@ -275,63 +307,67 @@ Try to improve the prediction quality from **Task 1** as much as possible by add
 ```{r message = FALSE, warnings = FALSE}
 # TODO: Build & evaluate model 2 (transformed numeric variables only)
 
-# imdbrating and tomato rating quantiles
-
-ggplot(df_num, aes(x=Budget^1.3, y=Gross)) +
-  geom_point(shape=1) +
-  geom_smooth()
-
-
 ### Power transformations should be before one-hot and binning
-log_transform <- function(x){log10()}
-
-num_col <- colnames(df_num)
+num_col <- colnames(df_numeric_train)
 num_col <- num_col[! num_col %in% 'Gross']
-power_df <- data.frame(matrix(NA, nrow = nrow(df_num), ncol = 0))
+power_df <- data.frame(matrix(NA, nrow = nrow(df_numeric_train), ncol = 0))
 
 for(j in 1:length(num_col)){
-    log_new_col <- log10(df_num[,num_col[j]] + 0.01) #to avoid log10(0)
+    #power_df[num_col[j]] <- df_numeric_train[,num_col[j]]
+    log_new_col <- log10(df_numeric_train[,num_col[j]] + 0.01) #to avoid log10(0)
     power_df[, paste0('log_', num_col[j])] <- log_new_col
-    sqr_new_col <- (df_num[,num_col[j]])^2
+    sqr_new_col <- (df_numeric_train[,num_col[j]])^2
     power_df[, paste0('square_', num_col[j])] <- sqr_new_col
-    cub_new_col <- (df_num[,num_col[j]])^3
+    cub_new_col <- (df_numeric_train[,num_col[j]])^3
     power_df[, paste0('cube_', num_col[j])] <- cub_new_col
 }
 
 new_power_cols <- colnames(power_df)
 
-# Replace NA values with median data
+# Replace NA values with median data, shoudldnt be any
 for(i in 1:ncol(power_df)){
   power_df[is.na(power_df[,i]), i] <- median(power_df[,i], na.rm = TRUE)
 }
 
 #normalize all the columns
 power_df <- data.frame(sapply(power_df, function(x) scale(x, center = TRUE))) 
+power_df['Gross'] <- df_numeric_train$Gross
 
-combined_df <- cbind(df_numeric, power_df)
-
-lm_new_num <- lm(Gross~., data = combined_df)
+# Select the significant transformations
+lm_new_num <- lm(Gross~., data = power_df)
 summary(lm_new_num)
+
+power_df$Gross <- NULL
+combined_df <- cbind(df_numeric, power_df)
+#unique_cols <- unique(colnames(combined_df)
+
 
 feature_signif <- c('square_tomatoReviews',
 'cube_tomatoReviews',
 'square_tomatoRotten',
 'cube_tomatoUserMeter',
+'square_tomatoUserReviews',
+'cube_tomatoUserReviews',
 'square_imdbVotes',
 'log_imdbVotes',
 'cube_tomatoUserMeter',
 'cube_Budget',
 'log_Released_year',
-'square_Released_year',
-'cube_Released_year')
+'square_Released_year')
 
 combined_cols_wanted <- c(colnames(df_numeric), feature_signif)
 combined_df_wanted <- combined_df[,combined_cols_wanted]
 combined_df_wanted$cube_tomatoUserMeter.1 <- NULL
 
-lm_new_num <- lm(Gross~., data = combined_df_wanted)
-summary(lm_new_num)
-combined_df_wanted <- combined_df #not removing any features
+#combined_df_wanted <- combined_df_wanted_withTitle
+combined_df_wanted_withTitle <- combined_df_wanted #saved for later
+#combined_df_wanted$Title <- NULL
+
+#lm_new_num <- lm(Gross~., data = combined_df_wanted)
+#summary(lm_new_num)
+#combined_df_wanted <- combined_df #not removing any features
+
+
 # budget quantiles
 budget_quantiles <- quantile(combined_df_wanted$Budget, probs = seq(0, 1, 0.2), na.rm = TRUE)
 budgetQuantiles <- function(budget) {
@@ -342,13 +378,13 @@ combined_df_wanted <- cSplit_e(combined_df_wanted, "budget_quant", ",", type = "
 combined_df_wanted$`budget_quant_Ultra-Low-Budget` <- NULL #to remove linearly dependent vars)
 
 # runtime quantiles
-runtime_quantiles <- quantile(combined_df_wanted$Runtime, probs = seq(0, 1, 0.33), na.rm = TRUE)
-runtimeQuantiles <- function(runtime) {
-  cut(runtime, breaks = runtime_quantiles, labels = c( "Short", "Medium", "Long"))
-}
-combined_df_wanted$runtime_quant <- sapply(combined_df_wanted$Runtime, runtimeQuantiles)
-combined_df_wanted <- cSplit_e(combined_df_wanted, "runtime_quant", ",", type = "character", fill = 0) #split Genre column in to 
-combined_df_wanted$runtime_quant_Short <- NULL #to remove linearly dependent vars)
+#runtime_quantiles <- quantile(combined_df_wanted$Runtime, probs = seq(0, 1, 0.33), na.rm = TRUE)
+#runtimeQuantiles <- function(runtime) {
+#  cut(runtime, breaks = runtime_quantiles, labels = c( "Short", "Medium", "Long"))
+#}
+#combined_df_wanted$runtime_quant <- sapply(combined_df_wanted$Runtime, runtimeQuantiles)
+#combined_df_wanted <- cSplit_e(combined_df_wanted, "runtime_quant", ",", type = "character", fill = 0) #split Genre column in to 
+#combined_df_wanted$runtime_quant_Short <- NULL #to remove linearly dependent vars)
 
 ### One hot encoding and binning
 # imdb quantiles
@@ -384,31 +420,12 @@ combined_df_wanted$imdbvote_bin<-cut(imdbvotes,seq(min(imdbvotes)-1,max(imdbvote
 combined_df_wanted$imdbvote_bin <- as.numeric(as.factor(combined_df_wanted$imdbvote_bin))
 
 # removing na in categoriacal like tomato_Q
-combined_df_wanted <- na.omit(combined_df_wanted)
-
-#combined_df <- na.omit(combined_df)
-
+combined_df_wanted <- na.omit(combined_df_wanted) #Has Title
+# select only numerical, shouldnt be any other than Title
 temp <- combined_df_wanted[,sapply(combined_df_wanted, function(x) is.numeric(x))]
 
-temp <- combined_df[,sapply(combined_df, function(x) is.numeric(x))]
-
-
-lm_new_num <- lm(Gross~., data = temp)
-summary(lm_new_num)
-
-# 
-temp$Run
-
-dim(df_num)
-
-temp$Budget <- NULL
-temp$Runtime <- NULL
-temp$imdbRating <- NULL
-temp$tomatoRating <- NULL
-temp$Metascore <- NULL
-temp$imdbVotes <- NULL
-
 # 'training_size_stats_tranform7' - with only wanted cols and no quantiles - looks better
+training_size <- seq(0.1, 1, length.out = 15)
 training_size_stats_tranform7 <- data.frame(matrix(nrow = 10, ncol =3))
 colnames(training_size_stats_tranform7) <- c("training_size", "train_rmse", "test_rmse")
 
@@ -416,16 +433,30 @@ for(i in 1:length(training_size)){
   resutls_transform <- RMSE(temp, training_size[i])
   training_size_stats_tranform7[i,] <- c(training_size[i], resutls_transform[1], resutls_transform[2])
 }
+
+rmse_task2 <- melt(training_size_stats_tranform7[,c('training_size', "train_rmse", "test_rmse")], id = "training_size")
+colnames(rmse_task2) <- c("training_size", "variable", "RMSE")
+
+ggplot(rmse_task2, aes(x = training_size, y=RMSE, group = variable, color = variable)) + 
+  geom_line(linetype = "dashed") + 
+  geom_point() + scale_y_log10() +
+ggtitle("Transformed Numeric Feature Modelling")
+
+
+print(paste("Best mean test RMSE value observed for numeric features:", min(training_size_stats_tranform7$test_rmse), sep = " "))
 ```
 
 **Q**: Explain which transformations you used and why you chose them.
 
-**A**: 
+**A**: 1. Binning: Binning's really only a good idea when you'd expect a discontinuity in the response at the cut-points. Runtime although a real valued feature there are discontinuities i.e Runtime generally fall in to few buckets like short, medium, long, very long e.t.c
 
+      2. One-hot Encoding: In the EDA from Project 1, we have observed distinct distributions of Budget, hence I created 5 categories of budget i.e. Low Budget, High Budget, Large Budget e.t.c as one-hot encoded variables
+
+      3. Power Transforming: I have tested log, squared and power transformations on all the numeric variables. By looking at plots of features like Budget and looking at the significane of transformed features, I have filtered them to a set of 11 new features. 
 
 **Q**: How did the RMSE change compared to Task 1?
 
-**A**: 
+**A**: R^2 increased from 0.72 to 0.76 when added these transformed features. Overall the test RMSE has improved compared to Pure numeric feature test RMSE at training size greater than 40%. Best mean test RMSE value observed for numeric features: 71969667.8478177 at 42% and second best test RMSE 74596218 at 90% training size.
 
 
 ## 3. Non-numeric variables
@@ -474,15 +505,15 @@ df_categ <- merge(df_categ, genre_df, by = c('Title', 'Released_year'))
 
 #### Convert Writer feature to no.of writers for features
 #remove uncesseray characters from Writer feature
-df2 <- df_categ #delete later
-df_categ$Writer <- gsub(" \\([a-z]*\\)","", df_categ$Writer)
+#df2 <- df_categ #delete later
+#df_categ$Writer <- gsub(" \\([a-z]*\\)","", df_categ$Writer)
 
-writer_df <- df_categ[,c('Title', 'Writer', 'Released_year')]
-writer_df <- cSplit_e(writer_df, "Writer", ",", type = "character", fill = 0) #split Writer column in to 
-writer_df$`Writer_N/A` <- NULL
+#writer_df <- df_categ[,c('Title', 'Writer', 'Released_year')]
+#writer_df <- cSplit_e(writer_df, "Writer", ",", type = "character", fill = 0) #split Writer column in to 
+#writer_df$`Writer_N/A` <- NULL
 
-df_categ$Writer <- NULL
-df_categ$Writer <-  as.data.frame(rowSums(writer_df[,4:ncol(writer_df)]))
+#df_categ$Writer <- NULL
+#df_categ$Writer <-  as.data.frame(rowSums(writer_df[,4:ncol(writer_df)]))
 
 #### Convert Production to binary feature
 df3 <- df_categ #delete later
@@ -578,19 +609,34 @@ df_categ$numeric_awards <- NULL
 df_categ <- merge(df_categ, df[,c('Title', 'Released_year', 'Gross')], by = c('Title', 'Released_year'))
 df_categ$Released_year <- NULL
 
+df_categ <- na.omit(df_categ) # used for Task 5
+
 num_categ_cols <- sapply(df_categ, function(x) is.numeric(x))
-df_categ <- df_categ[, num_categ_cols]
-df_categ <- na.omit(df_categ)
+
+df_categ_train <- df_categ[, num_categ_cols]
+
 
 ## model for categorical features
 training_size <- seq(0.1, 1, length.out = 20)
 training_size_stats_categ <- data.frame(matrix(nrow = 20, ncol =3))
-colnames(training_size_stats_categ) <- c("training_size", "train_rmse_categorical", "test_rmse_categorical")
+colnames(training_size_stats_categ) <- c("training_size", "train_rmse", "test_rmse")
 
 for(i in 1:length(training_size)){
-  resutls_categ <- RMSE(df_categ, training_size[i])
+  resutls_categ <- RMSE(df_categ_train, training_size[i])
   training_size_stats_categ[i,] <- c(training_size[i], resutls_categ[1], resutls_categ[2])
 }
+
+rmse_task3 <- melt(training_size_stats_categ[,c('training_size', "train_rmse", "test_rmse")], id = "training_size")
+colnames(rmse_task2) <- c("training_size", "variable", "RMSE")
+
+ggplot(rmse_task2, aes(x = training_size, y=RMSE, group = variable, color = variable)) + 
+  geom_line(linetype = "dashed") + 
+  geom_point() + scale_y_log10() +
+ggtitle("Transformed Numeric Feature Modelling")
+
+
+print(paste("Best mean test RMSE value observed for numeric features:", min(training_size_stats_categ$test_rmse), sep = " "))
+
 ```
 
 **Q**: Explain which categorical variables you used, and how you encoded them into features.
@@ -600,8 +646,9 @@ for(i in 1:length(training_size)){
 
 **Q**: What is the best mean test RMSE value you observed, and at what training set size? How does this compare with Task 2?
 
-**A**: 
+**A**: 1. Best mean test RMSE value observed for numeric features: 120608544.579493 at 67% training size. Since we are only using categorical features and excluded very significant numerical features like budget, Categorical model has high RMSE compared to test RMSE from Task 2.
 
+      2. R-Squared value is approx. .45 compared ~.76 from Task 2.
 
 ## 4. Numeric and categorical variables
 
@@ -609,22 +656,82 @@ Try to improve the prediction quality as much as possible by using both numeric 
 
 ```{r}
 # TODO: Build & evaluate model 4 (numeric & converted non-numeric variables)
-
 #merge df_num and df_categ to df_all
 
+#combined_df1 <- cbind(df$Title, combined_df)
+#colnames(combined_df1) <- c("Title", colnames(combined_df))
+
+combined_df1 <- cbind(df$Title, combined_df_wanted)
+colnames(combined_df1) <- c("Title", colnames(combined_df_wanted))
+
+combined_num_categ_df = merge(combined_df1, df_categ, by = "Title")
+
+combined_num_categ_df = na.omit(combined_num_categ_df)
+
+combined_num_categ_df = rename(combined_num_categ_df, c("Gross.x" = "Gross"))
+combined_num_categ_df$Gross.y <- NULL
+#combined_num_categ_df = rename(combined_num_categ_df, c("Writer" = "Writer"))
+#colnames(combined_num_categ_df) <- colnames(combined_num_categ_df)
+
+#combined_num_categ_df[,99] <- NULL  #removing writer column
+
+combined_num_categ_df_train <- combined_num_categ_df 
+
+combined_num_categ_df_train <- combined_num_categ_df_train[, sapply(combined_num_categ_df_train, function(x) is.numeric(x))]
+
+test <- combined_num_categ_df_train[combined_num_categ_df_train$Gross != 0, ]
+
+# Removing linearly dependent or insignificant features
+# step has no impact if filterd categorical features are chosen
+test$log_month <- NULL
+test$square_month <- NULL
+test$cube_month <- NULL
+test$tomatoImage_rotten <- NULL
+test$cube_Released_year <- NULL
+test$`Rated_TV-14` <- NULL
+test$`Rated_TV-G` <- NULL
+test$`Rated_TV-PG` <- NULL
+
 training_size <- seq(0.1, 1, length.out = 20)
-training_size_stats_all <- data.frame(matrix(nrow = 10, ncol =3))
-colnames(training_size_stats_all) <- c("training_size", "train_rmse_allFeatures", "test_rmse_allFeatures")
+training_size_stats_comb2 <- data.frame(matrix(nrow = 20, ncol =3))
+colnames(training_size_stats_comb2) <- c("training_size", "train_rmse", "test_rmse")
 
 for(i in 1:length(training_size)){
-  resutls_allFeatures <- RMSE(df_categ, training_size[i])
-  training_size_stats_all[i,] <- c(training_size[i], resutls_allFeatures[1], resutls_allFeatures[2])
+  #resutls_allFeatures <- RMSE(combined_num_categ_df_train, training_size[i])
+  resutls_allFeatures <- RMSE(test, training_size[i])
+  training_size_stats_comb2[i,] <- c(training_size[i], resutls_allFeatures[1], resutls_allFeatures[2])
 }
+
+lm_new_num <- lm(Gross~., data = test)
+summary(lm_new_num)
+
+rmse_task4 <- melt(training_size_stats_comb2[,c('training_size', "train_rmse", "test_rmse")], id = "training_size")
+colnames(rmse_task4) <- c("training_size", "variable", "RMSE")
+
+ggplot(rmse_add, aes(x = training_size, y=RMSE, group = variable, color = variable)) + 
+  geom_line(linetype = "dashed") + 
+  geom_point() +
+ggtitle("this plot has not budget Q and runtime bin ")
+
+# this plot has not budget and runtime bin
 ```
+
+```{r}
+rmse_add <- melt(training_size_stats_comb2[,c('training_size', "train_rmse", "test_rmse")], id = "training_size")
+colnames(rmse_add) <- c("training_size", "variable", "RMSE")
+
+ggplot(rmse_add, aes(x = training_size, y=RMSE, group = variable, color = variable)) + 
+  geom_line(linetype = "dashed") + 
+  geom_point() +
+ggtitle("this plot has budget Q and runtime bin ")
+```
+
 
 **Q**: Compare the observed RMSE with Tasks 2 & 3.
 
-**A**: 
+**A**: Combined model performed slightly better or equivalent to pure numeric model. 
+       When Compared the RMSE values combined model performaed better than Task 2 and significantly better than Task 3. 
+       When Compared the R-square values combined model performaed better than Task 2 and significantly better than Task 3(0.76 Vs .45)
 
 
 ## 5. Additional features
@@ -633,14 +740,138 @@ Now try creating additional features such as interactions (e.g. `is_genre_comedy
 
 ```{r}
 # TODO: Build & evaluate model 5 (numeric, non-numeric and additional features)
+
+combined_df2 <- cbind(df$Title, combined_df_wanted) # this combined_df_wanted must have budget quantiles
+colnames(combined_df2) <- c("Title", colnames(combined_df_wanted))
+combined_additional = merge(combined_df2, df_categ, by = "Title")
+combined_additional = na.omit(combined_additional)
+combined_additional = rename(combined_additional, c("Gross.x" = "Gross"))
+combined_additional$Gross.y <- NULL
+combined_additional_train <- combined_additional 
+
+combined_additional_train <- combined_additional_train[, sapply(combined_additional_train, function(x) is.numeric(x))]
+combined_additional_train <- combined_additional_train[combined_additional_train$Gross != 0, ]
+
+#### Interaction between features extracted from Genre and Production
+Print("The idea is high budget movies coming from big production movies in general tend to have high Grossings. Also Genre and Budget category should have some interaction, the idea is ex: Action movies produced with high budget tends to have high Gross")
+
+print("The features used for creating interaction features are one hot encode from original Genre and Budget. Budget was first split using quantiles and then one-hot encoded")
+
+genre_cols <- 43:54
+budget_cols <- 26:29
+production_cols <- 1:1
+all_cols <- colnames(combined_additional_train)
+
+interaction_df <- data.frame(matrix(NA, nrow = nrow(combined_additional_train), ncol = 0))
+
+
+for(i in genre_cols){
+  genre_colname <- all_cols[i]
+  genre_colname <- gsub("Genre_", "", genre_colname)
+  for(j in budget_cols){
+    budget_colname <- all_cols[j]
+    budget_colname <- gsub("budget_quant_", "", budget_colname)
+    inter_colname <- paste0("Inter_", genre_colname, "_", budget_colname)
+    interaction_df[inter_colname] = combined_additional_train[,i] * combined_additional_train[,j]
+  }
+}
+
+# for(i in genre_cols){
+#   prod_colname <- all_cols[i]
+#   prod_colname <- gsub("Production_", "", prod_colname)
+#   for(j in budget_cols){
+#     budget_colname <- all_cols[j]
+#     budget_colname <- gsub("budget_quant_", "", budget_colname)
+#     inter_colname <- paste0("Inter_", prod_colname, "_", budget_colname)
+#     interaction_df[inter_colname] = combined_additional_train[,i] * combined_additional_train[,j]
+#   }
+# }
+
+### finding the significance of interaction between Genre and Budget by regression p-values
+interaction_df$Gross <- combined_additional_train$Gross
+
+lm_new_num <- lm(Gross~., data = interaction_df)
+print(summary(lm_new_num))
+
+inter_signif_cols <- c('Inter_Drama_Ultra-Large-Budget',
+'Inter_Comedy_Large-Budget',
+'Inter_Comedy_Ultra-Large-Budget',
+'Inter_Action_Ultra-Large-Budget',
+'Inter_Romance_Ultra-Large-Budget',
+'Inter_Adventure_Ultra-Large-Budget',
+'Inter_Crime_Ultra-Large-Budget',
+'Inter_Thriller_Large-Budget',
+'Inter_Thriller_Ultra-Large-Budget',
+'Inter_Fantasy_Ultra-Large-Budget',
+'Inter_Sci-Fi_Ultra-Large-Budget',
+'Inter_Family_Ultra-Large-Budget')
+
+print("Below are significant Interaction terms")
+print(inter_signif_cols)
+
+interaction_df <- interaction_df[, inter_signif_cols]
+
+combined_additional_train_inter <- cbind(combined_additional_train, interaction_df)
+
+## modelling
+combined_additional_train_inter <- combined_additional_train_inter[, sapply(combined_additional_train_inter, function(x) is.numeric(x))]
+
+test1 <- combined_additional_train_inter[combined_additional_train_inter$Gross != 0, ]
+
+lm_new_num <- lm(Gross~., data = test1)
+print(summary(lm_new_num))
+# Removing linearly dependent features
+# step has no impact if filterd categorical features are chosen
+test1$`Rated_TV-14` <- NULL
+test1$`Rated_TV-G` <- NULL
+test1$`Rated_TV-PG` <- NULL
+test1$tomatoImage_rotten <- NULL
+test1$cube_Released_year <- NULL
+
+
+training_size <- seq(0.1, 1, length.out = 20)
+training_size_stats_add <- data.frame(matrix(nrow = 20, ncol =3))
+colnames(training_size_stats_add) <- c("training_size", "train_rmse", "test_rmse")
+
+for(i in 1:length(training_size)){
+  #resutls_allFeatures <- RMSE(combined_num_categ_df_train, training_size[i])
+  resutls_allFeatures <- RMSE(test1, training_size[i])
+  training_size_stats_add[i,] <- c(training_size[i], resutls_allFeatures[1], resutls_allFeatures[2])
+}
+
+
+rmse_add <- melt(training_size_stats_add[,c('training_size', "train_rmse", "test_rmse")], id = "training_size")
+colnames(rmse_add) <- c("training_size", "variable", "RMSE")
+
+ggplot(rmse_add, aes(x = training_size, y=RMSE, group = variable, color = variable)) + 
+  geom_line(linetype = "dashed") + 
+  geom_point()
+ggtitle("3/5 train Versus test accuracies with training size")
+
+
+# test_plot_df <- cbind(training_size_stats_add, training_size_stats_comb)
+# test_plot_df[,4] <- NULL #making one training_size column NULL
+# 
+# rmse_add <- melt(test_plot_df[,c('training_size', "train_rmse", "test_rmse", "train_rmse_allFeatures", "test_rmse_allFeatures")], id = "training_size")
+# colnames(rmse_add) <- c("training_size", "variable", "RMSE")
+# 
+# ggplot(rmse_add, aes(x = training_size, y=RMSE, group = variable, color = variable)) + 
+#   geom_line(linetype = "dashed") + 
+#   geom_point()
+# ggtitle("3/5 train Versus test accuracies with training size")
 ```
 
 **Q**: Explain what new features you designed and why you chose them.
 
-**A**: 
+**A**: Interaction terms between one-hot encoded Genre and Budget.
+[69]  "Inter_Drama_Ultra-Large-Budget"    
+[70] "Inter_Comedy_Large-Budget"          "Inter_Comedy_Ultra-Large-Budget"    "Inter_Action_Ultra-Large-Budget"   
+[73] "Inter_Romance_Ultra-Large-Budget"   "Inter_Adventure_Ultra-Large-Budget" "Inter_Crime_Ultra-Large-Budget"    
+[76] "Inter_Thriller_Large-Budget"        "Inter_Thriller_Ultra-Large-Budget"  "Inter_Fantasy_Ultra-Large-Budget"  
+[79] "Inter_Sci-Fi_Ultra-Large-Budget"    "Inter_Family_Ultra-Large-Budget"   
 
 
 **Q**: Comment on the final RMSE values you obtained, and what you learned through the course of this project.
 
-**A**:
+**A**:We learned the theory of linear regression and how to apply it. We learned how to use training data to make predictions
 
